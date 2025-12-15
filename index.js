@@ -415,6 +415,71 @@ export class Gitmark {
   }
 
   /**
+   * Verify git ancestry of commits (requires git CLI)
+   * Checks that each commit is a descendant of the previous
+   * @param {string[]} commits - Array of commit hashes
+   * @returns {Object} { valid: boolean, error?: string }
+   */
+  static verifyGitAncestry(commits) {
+    if (!Array.isArray(commits) || commits.length < 2) {
+      return { valid: true }; // Nothing to verify
+    }
+
+    // Dynamic import for execSync (only works in Node.js)
+    let execSync;
+    try {
+      execSync = require('child_process').execSync;
+    } catch {
+      return { valid: false, error: 'Git ancestry check requires Node.js' };
+    }
+
+    for (let i = 1; i < commits.length; i++) {
+      const ancestor = commits[i - 1];
+      const descendant = commits[i];
+
+      try {
+        // Check if ancestor is an ancestor of descendant
+        execSync(`git merge-base --is-ancestor ${ancestor} ${descendant}`, {
+          stdio: 'ignore'
+        });
+      } catch {
+        return {
+          valid: false,
+          error: `Commit ${descendant.slice(0, 8)} is not a descendant of ${ancestor.slice(0, 8)}`
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verify both EC_ADD chain and git ancestry
+   * @param {string[]} uris - Array of TXO URI strings
+   * @returns {Object} { valid: boolean, error?: string, ecValid?: boolean, gitValid?: boolean }
+   */
+  static verifyFull(uris) {
+    // First verify EC_ADD chain
+    const ecResult = Gitmark.verify(uris);
+    if (!ecResult.valid) {
+      return { ...ecResult, ecValid: false, gitValid: null };
+    }
+
+    // Extract commits and verify git ancestry
+    const txos = uris.map(parseTxoUri);
+    const commits = txos.slice(1).map(t => t.commit).filter(Boolean);
+
+    const gitResult = Gitmark.verifyGitAncestry(commits);
+
+    return {
+      valid: gitResult.valid,
+      error: gitResult.error,
+      ecValid: true,
+      gitValid: gitResult.valid
+    };
+  }
+
+  /**
    * Load from TXO URIs (for verification/display only, no private key)
    * @param {string[]} uris - Array of TXO URI strings
    * @returns {Object} Loaded state info

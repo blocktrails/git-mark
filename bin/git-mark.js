@@ -248,20 +248,41 @@ const commands = {
     console.log('Current pubkey:', state.txos[state.txos.length - 1]?.pubkey);
   },
 
-  verify() {
+  verify(options) {
     const uris = loadTxoJson();
     if (uris.length === 0) {
       console.error('No TXO URIs found in', TXO_FILE);
       process.exit(1);
     }
 
-    const result = Gitmark.verify(uris);
-    if (result.valid) {
-      console.log('Valid');
-      console.log('Chain length:', uris.length);
+    if (options.full) {
+      // Full verification: EC_ADD + git ancestry
+      const result = Gitmark.verifyFull(uris);
+      if (result.valid) {
+        console.log('Valid');
+        console.log('  EC_ADD chain: valid');
+        console.log('  Git ancestry: valid');
+        console.log('Chain length:', uris.length);
+      } else {
+        console.log('Invalid:', result.error);
+        if (result.ecValid === false) {
+          console.log('  EC_ADD chain: invalid');
+        } else if (result.gitValid === false) {
+          console.log('  EC_ADD chain: valid');
+          console.log('  Git ancestry: invalid');
+        }
+        process.exit(1);
+      }
     } else {
-      console.log('Invalid:', result.error);
-      process.exit(1);
+      // EC_ADD verification only
+      const result = Gitmark.verify(uris);
+      if (result.valid) {
+        console.log('Valid');
+        console.log('Chain length:', uris.length);
+      } else {
+        console.log('Invalid:', result.error);
+        process.exit(1);
+      }
     }
   },
 
@@ -308,7 +329,7 @@ Commands:
   genesis   Create genesis with first UTXO
   advance   Advance state with a git commit
   show      Display current state and TXO chain
-  verify    Verify TXO chain integrity
+  verify    Verify TXO chain integrity (--full for git ancestry check)
   address   Show current Taproot address
   export    Output txo.json to stdout
 
@@ -319,6 +340,7 @@ Options:
   --vout <n>        Output index
   --amount <sats>   Amount in satoshis
   --commit <hash>   Git commit hash (default: HEAD)
+  --full            Full verification including git ancestry
 
 Examples:
   git mark init
