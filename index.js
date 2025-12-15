@@ -1,20 +1,20 @@
 /**
  * git-mark - Git commits anchored to Bitcoin via Blocktrails
  *
- * Uses git commit hashes as tweaks for pubkey derivation.
+ * Uses git commit hashes directly as tweaks for pubkey derivation.
+ * No additional hashing - the commit hash is already SHA-1.
  * TXO URIs track the on-chain state.
  */
 
 import {
-  Blocktrail,
-  deriveChainedPublicKey,
-  deriveChainedPrivateKey,
   p2trXonly,
-  scalar,
   bytesToHex,
   hexToBytes
 } from 'blocktrails';
 import * as secp from '@noble/secp256k1';
+
+// secp256k1 curve order
+const N = secp.CURVE.n;
 
 // Network HRPs for bech32m
 const NETWORK_HRP = {
@@ -23,6 +23,85 @@ const NETWORK_HRP = {
   signet: 'tb',
   regtest: 'bcrt'
 };
+
+/**
+ * Convert git commit hash to scalar (no additional hashing)
+ * Git commit hash is already SHA-1, so we just interpret it as bigint mod n
+ *
+ * @param {string} commitHash - 40 hex char git commit hash
+ * @returns {bigint} Scalar value in range [1, n-1]
+ */
+export function commitScalar(commitHash) {
+  // Pad to 32 bytes (64 hex) for consistent bigint conversion
+  // SHA-1 is 20 bytes, we pad with leading zeros
+  const padded = commitHash.padStart(64, '0');
+  const bytes = hexToBytes(padded);
+  const t = bytesToBigInt(bytes) % N;
+
+  if (t === 0n) {
+    throw new Error('Invalid commit: scalar is zero');
+  }
+
+  return t;
+}
+
+/**
+ * Derive chained public key from commits
+ * P = P_base + scalar(commit₁)·G + scalar(commit₂)·G + ...
+ *
+ * @param {Uint8Array} publicKeyBase - Base public key (33 bytes compressed)
+ * @param {string[]} commits - Array of commit hashes
+ * @returns {Uint8Array} Derived public key (33 bytes compressed)
+ */
+function deriveChainedPublicKeyFromCommits(publicKeyBase, commits) {
+  let P = secp.ProjectivePoint.fromHex(publicKeyBase);
+
+  for (const commit of commits) {
+    const t = commitScalar(commit);
+    const tG = secp.ProjectivePoint.BASE.multiply(t);
+    P = P.add(tG);
+  }
+
+  return P.toRawBytes(true);
+}
+
+/**
+ * Derive chained private key from commits
+ * d = d_base + scalar(commit₁) + scalar(commit₂) + ...
+ *
+ * @param {Uint8Array} privateKeyBase - Base private key (32 bytes)
+ * @param {string[]} commits - Array of commit hashes
+ * @returns {Uint8Array} Derived private key (32 bytes)
+ */
+function deriveChainedPrivateKeyFromCommits(privateKeyBase, commits) {
+  let d = bytesToBigInt(privateKeyBase);
+
+  for (const commit of commits) {
+    const t = commitScalar(commit);
+    d = (d + t) % N;
+  }
+
+  return bigIntToBytes(d, 32);
+}
+
+// Utility: bytes to bigint (big-endian)
+function bytesToBigInt(bytes) {
+  let result = 0n;
+  for (const byte of bytes) {
+    result = (result << 8n) + BigInt(byte);
+  }
+  return result;
+}
+
+// Utility: bigint to bytes (big-endian)
+function bigIntToBytes(num, length) {
+  const bytes = new Uint8Array(length);
+  for (let i = length - 1; i >= 0; i--) {
+    bytes[i] = Number(num & 0xffn);
+    num >>= 8n;
+  }
+  return bytes;
+}
 
 /**
  * Parse a TXO URI string
@@ -188,7 +267,7 @@ export class Gitmark {
     this.commits.push(commitHash);
 
     // Derive new pubkey using commit hash as state
-    const newP = deriveChainedPublicKey(this.publicKeyBase, this.commits);
+    const newP = deriveChainedPublicKeyFromCommits(this.publicKeyBase, this.commits);
     const pubkey = bytesToHex(p2trXonly(newP));
 
     const txo = { txid, vout, amount, pubkey, commit: commitHash };
@@ -210,7 +289,7 @@ export class Gitmark {
     if (this.commits.length === 0) {
       return bytesToHex(p2trXonly(this.publicKeyBase));
     }
-    const P = deriveChainedPublicKey(this.publicKeyBase, this.commits);
+    const P = deriveChainedPublicKeyFromCommits(this.publicKeyBase, this.commits);
     return bytesToHex(p2trXonly(P));
   }
 
@@ -221,7 +300,7 @@ export class Gitmark {
   address() {
     const wp = this.commits.length === 0
       ? p2trXonly(this.publicKeyBase)
-      : p2trXonly(deriveChainedPublicKey(this.publicKeyBase, this.commits));
+      : p2trXonly(deriveChainedPublicKeyFromCommits(this.publicKeyBase, this.commits));
     return encodeBech32m(this.hrp, wp);
   }
 
@@ -240,7 +319,7 @@ export class Gitmark {
     }
 
     const states = this.commits.slice(0, index);
-    const P = deriveChainedPublicKey(this.publicKeyBase, states);
+    const P = deriveChainedPublicKeyFromCommits(this.publicKeyBase, states);
     return encodeBech32m(this.hrp, p2trXonly(P));
   }
 
@@ -252,7 +331,7 @@ export class Gitmark {
     if (this.commits.length === 0) {
       return bytesToHex(this.privateKeyBase);
     }
-    const d = deriveChainedPrivateKey(this.privateKeyBase, this.commits);
+    const d = deriveChainedPrivateKeyFromCommits(this.privateKeyBase, this.commits);
     return bytesToHex(d);
   }
 
@@ -321,7 +400,7 @@ export class Gitmark {
       commits.push(txo.commit);
 
       // Derive expected pubkey
-      const expectedP = deriveChainedPublicKey(basePubkeyBytes, commits);
+      const expectedP = deriveChainedPublicKeyFromCommits(basePubkeyBytes, commits);
       const expectedPubkey = bytesToHex(p2trXonly(expectedP));
 
       if (expectedPubkey !== txo.pubkey) {
