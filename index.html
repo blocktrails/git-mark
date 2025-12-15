@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>git-mark - Git commits anchored to Bitcoin</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --fg: #c9d1d9;
+      --accent: #58a6ff;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --success: #3fb950;
+      --warning: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+      padding: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    h2 { color: var(--fg); margin: 2rem 0 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    h3 { margin: 1.5rem 0 0.5rem; }
+    p { margin: 1rem 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      background: var(--code-bg);
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    pre {
+      background: var(--code-bg);
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    pre code { background: none; padding: 0; }
+    .subtitle { color: #8b949e; font-size: 1.1rem; margin-bottom: 2rem; }
+    .diagram {
+      background: var(--code-bg);
+      padding: 1.5rem;
+      border-radius: 8px;
+      font-family: monospace;
+      white-space: pre;
+      overflow-x: auto;
+      line-height: 1.4;
+      margin: 1rem 0;
+    }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 1rem; text-align: left; }
+    th { background: var(--code-bg); }
+    .demo-section {
+      background: var(--code-bg);
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+    }
+    .demo-section h3 { margin-top: 0; }
+    input, button {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      margin: 0.25rem;
+    }
+    input { width: 100%; max-width: 500px; }
+    button {
+      background: var(--accent);
+      color: var(--bg);
+      cursor: pointer;
+      border: none;
+    }
+    button:hover { opacity: 0.9; }
+    .output {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 1rem;
+      border-radius: 4px;
+      margin-top: 1rem;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .links { display: flex; gap: 1rem; margin: 1rem 0; flex-wrap: wrap; }
+    .links a {
+      background: var(--code-bg);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .valid { color: var(--success); }
+    .invalid { color: var(--warning); }
+  </style>
+</head>
+<body>
+  <h1>git-mark</h1>
+  <p class="subtitle">Git commits anchored to Bitcoin via <a href="https://blocktrails.org">Blocktrails</a></p>
+
+  <div class="links">
+    <a href="https://github.com/blocktrails/git-mark">GitHub</a>
+    <a href="https://blocktrails.org/spec/">Blocktrails Spec</a>
+    <a href="https://git-mark.com">Legacy gitmark</a>
+  </div>
+
+  <h2>Overview</h2>
+  <p>
+    git-mark binds Bitcoin UTXOs to Git commits using elliptic curve tweaking.
+    Each commit hash becomes a tweak that derives a new pubkey, creating a
+    cryptographic chain linking your repository history to Bitcoin.
+  </p>
+
+  <div class="diagram">Genesis:   P&#8320; = privkey &#215; G              (base pubkey)
+Commit 1:  P&#8321; = P&#8320; + sha256(commit&#8321;) &#215; G  (tweaked by git commit)
+Commit 2:  P&#8322; = P&#8321; + sha256(commit&#8322;) &#215; G
+...</div>
+
+  <h2>How It Works</h2>
+  <p>
+    Git-mark uses <a href="https://petertodd.org/2016/commitments-and-single-use-seals">single-use seals</a>
+    to create a two-way binding between Git and Bitcoin:
+  </p>
+  <ul style="margin-left: 2rem;">
+    <li><strong>Git &#8594; Bitcoin:</strong> Commit hash tweaks the pubkey, recorded on-chain</li>
+    <li><strong>Bitcoin &#8594; Git:</strong> TXO URI in repository points to the UTXO</li>
+  </ul>
+
+  <div class="diagram">                    &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+                    &#9474; Git Commit  &#9474;
+                    &#9474; (state &#916;)   &#9474;
+                    &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                           &#9474; hash
+                           &#9660;
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;    tweak    &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474; P_old    &#9474;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9658;&#9474; P_new    &#9474;
+&#9474; (UTXO&#8321;)  &#9474;             &#9474; (UTXO&#8322;)  &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;             &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+     &#9474;                        &#9474;
+     &#9474; spend                  &#9474; new output
+     &#9660;                        &#9660;
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;         Bitcoin Transaction        &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;</div>
+
+  <h2>TXO URI Format</h2>
+  <pre><code>txo:&lt;network&gt;:&lt;txid&gt;:&lt;vout&gt;?amount=&lt;sats&gt;&amp;pubkey=&lt;hex&gt;[&amp;commit=&lt;git_hash&gt;]</code></pre>
+
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td><code>network</code></td><td>Bitcoin network (tbtc4, mainnet, signet)</td></tr>
+    <tr><td><code>txid</code></td><td>Transaction ID (64 hex chars)</td></tr>
+    <tr><td><code>vout</code></td><td>Output index</td></tr>
+    <tr><td><code>amount</code></td><td>Value in satoshis</td></tr>
+    <tr><td><code>pubkey</code></td><td>X-only pubkey (64 hex chars)</td></tr>
+    <tr><td><code>commit</code></td><td>Git commit hash (40 hex chars, absent for genesis)</td></tr>
+  </table>
+
+  <h2>Quick Start</h2>
+  <pre><code># Install
+npm install -g git-seal
+
+# Initialize in your repo
+git mark init
+
+# Set your private key
+git config nostr.privkey &lt;64-char-hex&gt;
+
+# Create genesis with your first UTXO
+git mark genesis --txid &lt;txid&gt; --vout 0 --amount 1000000
+
+# Make changes and commit
+git commit -m "initial state"
+
+# Anchor the commit to Bitcoin
+git mark advance --txid &lt;new-txid&gt; --vout 0 --amount 999000
+
+# Show current state
+git mark show
+
+# Verify chain integrity
+git mark verify</code></pre>
+
+  <h2>TXO URI Parser</h2>
+  <div class="demo-section">
+    <h3>Parse TXO URI</h3>
+    <input type="text" id="parse-input" placeholder="txo:tbtc4:abc123...:0?amount=1000000&pubkey=..." value="txo:tbtc4:34cea31b10e809e7cef4e19ce6e681da22ba1d2ae723af110cbba191e854be0e:0?amount=1000000&pubkey=3e458cc6f434c2292b3a23c044f4b046d5726c5ddee91c85f920c16817a5c8cf&commit=cf97baba489e88c1ffbe6758c0fe8c18ff83d17d">
+    <button onclick="parseUri()">Parse</button>
+    <div id="parse-output" class="output"></div>
+  </div>
+
+  <h2>Chain Verifier</h2>
+  <div class="demo-section">
+    <h3>Verify TXO Chain</h3>
+    <p>Paste TXO URIs (one per line):</p>
+    <textarea id="verify-input" style="width:100%;height:120px;background:var(--bg);color:var(--fg);border:1px solid var(--border);padding:0.5rem;font-family:monospace;font-size:0.9rem;"></textarea>
+    <button onclick="verifyChain()">Verify</button>
+    <div id="verify-output" class="output"></div>
+  </div>
+
+  <h2>Library Usage</h2>
+  <pre><code>import { Gitmark } from 'git-seal';
+
+// Create instance with private key
+const gm = new Gitmark(privateKey, 'tbtc4');
+
+// Initialize genesis
+const genesis = gm.genesis(txid, vout, amount);
+console.log(genesis.address); // tb1p...
+
+// Advance with git commit
+const result = gm.advance(commitHash, newTxid, vout, amount);
+console.log(result.uri); // txo:tbtc4:...
+
+// Get current address
+console.log(gm.address());
+
+// Export TXO URIs for .well-known/txo/txo.json
+const uris = gm.exportTxoJson();
+
+// Verify a chain (no private key needed)
+const valid = Gitmark.verify(uris);
+if (!valid.valid) console.error(valid.error);</code></pre>
+
+  <h2>Directory Structure</h2>
+  <pre><code>.well-known/
+&#9492;&#9472;&#9472; txo/
+    &#9492;&#9472;&#9472; txo.json      # Array of TXO URIs</code></pre>
+
+  <h2>Links</h2>
+  <ul style="margin-left: 2rem;">
+    <li><a href="https://blocktrails.org">Blocktrails</a> - Output-key commitment chaining</li>
+    <li><a href="https://blocktrails.org/spec/">Specification</a></li>
+    <li><a href="https://petertodd.org/2016/commitments-and-single-use-seals">Single-Use Seals</a> - Peter Todd</li>
+    <li><a href="https://git-mark.com">Legacy gitmark</a> - Original implementation</li>
+  </ul>
+
+  <h2>License</h2>
+  <p>MIT</p>
+
+  <script type="module">
+    import { parseTxoUri, formatTxoUri, Gitmark, validateCommitHash, validatePubkey } from 'https://esm.sh/gh/blocktrails/git-mark@gh-pages/index.js';
+
+    window.parseUri = function() {
+      const input = document.getElementById('parse-input').value.trim();
+      const output = document.getElementById('parse-output');
+
+      try {
+        const parsed = parseTxoUri(input);
+        output.innerHTML = JSON.stringify(parsed, null, 2);
+        output.className = 'output';
+      } catch (e) {
+        output.innerHTML = 'Error: ' + e.message;
+        output.className = 'output invalid';
+      }
+    };
+
+    window.verifyChain = function() {
+      const input = document.getElementById('verify-input').value.trim();
+      const output = document.getElementById('verify-output');
+
+      if (!input) {
+        output.innerHTML = 'Please enter TXO URIs';
+        output.className = 'output';
+        return;
+      }
+
+      const uris = input.split('\n').map(s => s.trim()).filter(Boolean);
+
+      try {
+        const result = Gitmark.verify(uris);
+        if (result.valid) {
+          output.innerHTML = '<span class="valid">&#10004; Valid chain</span>\nLength: ' + uris.length + ' TXOs';
+          output.className = 'output';
+        } else {
+          output.innerHTML = '<span class="invalid">&#10008; Invalid</span>\n' + result.error;
+          output.className = 'output';
+        }
+      } catch (e) {
+        output.innerHTML = 'Error: ' + e.message;
+        output.className = 'output invalid';
+      }
+    };
+
+    // Initialize with example
+    parseUri();
+  </script>
+</body>
+</html>

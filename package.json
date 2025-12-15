@@ -1,0 +1,26 @@
+{
+  "name": "git-seal",
+  "version": "0.0.1",
+  "description": "Git commits anchored to Bitcoin via Blocktrails - gitmark profile",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "git-mark": "bin/git-mark.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "git",
+    "bitcoin",
+    "taproot",
+    "blocktrails",
+    "gitmark",
+    "single-use-seals"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "blocktrails": "^0.0.3"
+  }
+}
