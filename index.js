@@ -17,11 +17,17 @@ import * as secp from '@noble/secp256k1';
 const N = secp.CURVE.n;
 
 // Network HRPs for bech32m
+// sidestr chain ids behind the network names above (explorer: https://sidestr.com/explorer/?chain=<id>)
+export const NETWORK_CHAIN = { gitmark: 'sidestr:gitmark' };
 const NETWORK_HRP = {
   mainnet: 'bc',
   tbtc4: 'tb',
   signet: 'tb',
-  regtest: 'bcrt'
+  regtest: 'bcrt',
+  // sidestr chains (sidestr.com): the same taproot math; marks land in seconds and the chain is
+  // checkpointed into the BLAKE2b testnet4. A network name has no colon (txo URIs split on ':'),
+  // so the chain id is mapped here.
+  gitmark: 'gm'
 };
 
 /**

@@ -182,3 +182,13 @@ Format components into a TXO URI string.
 ## License
 
 MIT
+
+## Networks
+
+`tbtc4` (default), `mainnet`, `signet`, `regtest`, and `gitmark`: a [sidestr](https://sidestr.com)
+sidechain beside the BLAKE2b testnet4 made for trails — addresses `gm1p…`, transactions mined in
+seconds, and the chain's tip checkpointed into testnet4 every few blocks, so the parent's proof of
+work bounds when a mark was made. Get trail dust from the faucet in the
+[sidestr wallet](https://sidestr.com/wallet/?chain=sidestr:gitmark), send it to `git mark address`,
+and `git mark advance` with the txid the wallet shows. Explorer:
+https://sidestr.com/explorer/?chain=sidestr:gitmark.
