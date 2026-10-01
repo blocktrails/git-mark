@@ -18,7 +18,7 @@ git mark init
 git config nostr.privkey <64-char-hex>
 
 # Create genesis with your first UTXO
-git mark genesis --txid <txid> --vout 0 --amount 1000000
+git mark genesis --txid <txid> --vout 0 --amount 1000000 [--commit <hash>]   # the first commit; default HEAD
 
 # Make changes and commit
 git commit -m "initial state"
@@ -48,7 +48,7 @@ import { Gitmark } from 'git-seal';
 const gm = new Gitmark(privateKey, 'tbtc4');
 
 // Initialize genesis
-const genesis = gm.genesis(txid, vout, amount);
+const genesis = gm.genesis(txid, vout, amount, commitHash); // the genesis TXO carries the first commit
 console.log(genesis.address); // tb1p...
 console.log(genesis.uri);     // txo:tbtc4:...
 
@@ -72,7 +72,7 @@ if (!valid.valid) console.error(valid.error);
 ## TXO URI Format
 
 ```
-txo:<network>:<txid>:<vout>?amount=<sats>&pubkey=<hex>[&commit=<git_hash>]
+txo:<network>:<txid>:<vout>?amount=<sats>&commit=<git_hash>[&pubkey=<hex>]
 ```
 
 ### Components
@@ -83,14 +83,14 @@ txo:<network>:<txid>:<vout>?amount=<sats>&pubkey=<hex>[&commit=<git_hash>]
 | `txid` | Transaction ID (64 hex chars) |
 | `vout` | Output index |
 | `amount` | Value in satoshis |
-| `pubkey` | X-only pubkey (64 hex chars) |
-| `commit` | Git commit hash (40 hex, absent for genesis) |
+| `commit` | Git commit hash (40 hex): every TXO carries one, the genesis one too |
+| `pubkey` | X-only pubkey (64 hex chars), optional: a verifier recomputes it from the base key and the commits |
 
 ### Example
 
-Genesis (no commit):
+Genesis (tweaked by the first commit; the base key itself is never an output):
 ```
-txo:tbtc4:34cea31b10e809e7cef4e19ce6e681da22ba1d2ae723af110cbba191e854be0e:0?amount=1000000&pubkey=3e458cc6f434c2292b3a23c044f4b046d5726c5ddee91c85f920c16817a5c8cf
+txo:tbtc4:51d87101b7cbb01cc5a68785bf3141ec6fd00894d71ab1168d4daa20420eeacf:0?amount=999700&commit=9adc596cfd1100333393a12f2f41b2d820f16d0b
 ```
 
 After commit:
@@ -103,20 +103,20 @@ txo:tbtc4:45fbcbd79fc639204ae3dbe940881c66f7db1ad9b99eb49ff74fd83c481a9f7d:0?amo
 Git-mark uses single-use seals to bind Git commits to Bitcoin:
 
 ```
-Genesis:   P₀ = privkey × G              (base pubkey)
-Commit 1:  P₁ = P₀ + sha256(commit₁) × G  (tweaked by git commit)
-Commit 2:  P₂ = P₁ + sha256(commit₂) × G
+Base:      P_base = privkey × G                                    (published with the trail, as 02/03 + x)
+Genesis:   P₀ = P_base + t₀ × G,  t₀ = TapTweak(x(P_base) || sha256(commit₀))
+Commit 1:  P₁ = P₀ + t₁ × G,      t₁ = TapTweak(x(P₀) || sha256(commit₁))
 ...
 ```
 
-Each commit hash becomes a scalar tweak that derives the next pubkey. The UTXO chain on Bitcoin mirrors the commit chain in Git.
+This is Blocktrails Core with the state being the commit hash as text (the 40 hex characters, hashed). Each tweak depends on the point before it, and is added to that point as it is — never to its even-y lift — so the private and public derivations agree at every step whatever the parity along the way. The output of each mark is `x(Pᵢ)`; the sign a BIP 340 signature needs is applied only when signing. The UTXO chain on Bitcoin mirrors the commit chain in Git.
 
 ### Verification
 
-Clients verify by:
-1. Checking genesis has no commit
-2. Computing `P_new = P_prev + sha256(commit) × G` for each step
-3. Comparing computed pubkeys against recorded pubkeys
+Clients verify, from the trail's base key (`pubkeyBase`, a full compressed point, nothing to guess):
+1. Walking every link: `tᵢ = TapTweak(x(Pᵢ₋₁) || sha256(commitᵢ))`, `Pᵢ = Pᵢ₋₁ + tᵢ × G`
+2. Comparing `x(Pᵢ)` with the output on-chain (or the pubkey the URI records)
+3. Every link, not the head alone: the head commits only to the sum of the tweaks; the intermediate outputs pin each commit in its place
 
 ## Directory Structure
 
@@ -132,9 +132,17 @@ Clients verify by:
 
 Create a new Gitmark instance.
 
-### `gm.genesis(txid, vout, amount)`
+### `gm.genesis(txid, vout, amount, commitHash)`
 
-Initialize with genesis UTXO. Returns `{ txo, uri, address }`.
+Initialize with the genesis UTXO and the first commit (the genesis output is the base key tweaked by it). Returns `{ txo, uri, address }`.
+
+### `gm.trail()`
+
+The trail as `blocktrails.json`: `{ '@type', version, profile: 'gitmark', pubkeyBase, chain, states, txo }`, what a verifier reads.
+
+### `Gitmark.verify(uris, pubkeyBase)`
+
+Walk every link from the base key. Returns `{ valid, error?, expected }` with the expected x-only output of every TXO.
 
 ### `gm.advance(commitHash, txid, vout, amount)`
 
