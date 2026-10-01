@@ -61,12 +61,14 @@ console.log(gm.address());
 console.log(gm.currentPubkey());
 console.log(gm.spendingKey());
 
-// Export TXO URIs
+// Export TXO URIs, and the trail a verifier reads (blocktrails.json)
 const uris = gm.exportTxoJson();
+const trail = gm.trail();
 
-// Verify a chain (no private key needed)
-const valid = Gitmark.verify(uris);
-if (!valid.valid) console.error(valid.error);
+// Verify a chain from its base key (no private key needed): every link, nothing guessed
+const check = Gitmark.verify(trail.txo, trail.pubkeyBase);
+if (!check.valid) console.error(check.error);
+console.log(check.expected); // the x-only output of every TXO, to compare with the chain
 ```
 
 ## TXO URI Format
@@ -167,10 +169,6 @@ Get array of TXO URI strings.
 ### `gm.exportTxoJson()`
 
 Export URIs for `.well-known/txo/txo.json`.
-
-### `Gitmark.verify(uris)`
-
-Verify a chain of TXO URIs. Returns `{ valid: boolean, error?: string }`.
 
 ### `parseTxoUri(uri)`
 
