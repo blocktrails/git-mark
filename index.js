@@ -1,9 +1,12 @@
 /**
  * git-mark - Git commits anchored to Bitcoin via Blocktrails
  *
- * Uses git commit hashes directly as tweaks for pubkey derivation.
- * No additional hashing - the commit hash is already SHA-1.
- * TXO URIs track the on-chain state.
+ * Blocktrails Core with the state being the commit hash as text: at every step
+ *   t = TapTweak(x(P) || sha256(utf8(commit)))   P' = P + t·G   (on the full point, never its even-y lift)
+ * Every TXO carries the commit it was tweaked by, the genesis one too; the base key is never an
+ * output and travels with the trail as a full compressed point (pubkeyBase). This is the rule the
+ * live trails follow (profile: blocktrails.org/spec/profiles/gitmark.html). TXO URIs track the
+ * on-chain state.
  */
 
 import {
@@ -11,7 +14,14 @@ import {
   bytesToHex,
   hexToBytes
 } from 'blocktrails';
+export { bytesToHex, hexToBytes };
 import * as secp from '@noble/secp256k1';
+import { sha256 } from '@noble/hashes/sha256';
+// the Core scalar is computed here, not taken from the blocktrails package: the published 0.0.3
+// still derives with the earlier simple rule (t = sha256(state), no key binding), which is not
+// what the live trails use. BIP 340's tagged hash: sha256(sha256(tag) || sha256(tag) || msg)
+const TAG = sha256(new TextEncoder().encode('TapTweak'));
+const taggedTapTweak = (xOnly32, h32) => sha256(new Uint8Array([...TAG, ...TAG, ...xOnly32, ...h32]));
 
 // secp256k1 curve order
 const N = secp.CURVE.n;
@@ -31,62 +41,42 @@ const NETWORK_HRP = {
 };
 
 /**
- * Convert git commit hash to scalar (no additional hashing)
- * Git commit hash is already SHA-1, so we just interpret it as bigint mod n
- *
+ * The tweak for a commit at the current point: the Core scalar with the state being the commit's
+ * 40 hex characters as text (sha256 of the text, then TapTweak with x(P)). Depends on the point.
+ * @param {Uint8Array} pubkey - Current public key (33 bytes compressed)
  * @param {string} commitHash - 40 hex char git commit hash
  * @returns {bigint} Scalar value in range [1, n-1]
  */
-export function commitScalar(commitHash) {
-  // Pad to 32 bytes (64 hex) for consistent bigint conversion
-  // SHA-1 is 20 bytes, we pad with leading zeros
-  const padded = commitHash.padStart(64, '0');
-  const bytes = hexToBytes(padded);
-  const t = bytesToBigInt(bytes) % N;
-
-  if (t === 0n) {
-    throw new Error('Invalid commit: scalar is zero');
-  }
-
+export function commitScalar(pubkey, commitHash) {
+  if (!validateCommitHash(commitHash)) throw new Error('Invalid commit: must be 40 hex chars lowercase');
+  const h = sha256(new TextEncoder().encode(commitHash));           // the 40 hex characters as text
+  const t = bytesToBigInt(taggedTapTweak(pubkey.slice(1), h)) % N;  // x(P) of the current point, as it is
+  if (t === 0n) throw new Error('Invalid commit: scalar is zero');
   return t;
 }
 
 /**
- * Derive chained public key from commits
- * P = P_base + scalar(commit₁)·G + scalar(commit₂)·G + ...
- *
- * @param {Uint8Array} publicKeyBase - Base public key (33 bytes compressed)
- * @param {string[]} commits - Array of commit hashes
- * @returns {Uint8Array} Derived public key (33 bytes compressed)
+ * Derive chained public key from commits (the package's chain, commits as string states)
+ * P = P_base + t₀·G + t₁·G + …, each tᵢ from the point before it
  */
 function deriveChainedPublicKeyFromCommits(publicKeyBase, commits) {
   let P = secp.ProjectivePoint.fromHex(publicKeyBase);
-
   for (const commit of commits) {
-    const t = commitScalar(commit);
-    const tG = secp.ProjectivePoint.BASE.multiply(t);
-    P = P.add(tG);
+    const t = commitScalar(P.toRawBytes(true), commit);
+    P = P.add(secp.ProjectivePoint.BASE.multiply(t)); // the point as it is: never lifted between steps
   }
-
   return P.toRawBytes(true);
 }
 
 /**
- * Derive chained private key from commits
- * d = d_base + scalar(commit₁) + scalar(commit₂) + ...
- *
- * @param {Uint8Array} privateKeyBase - Base private key (32 bytes)
- * @param {string[]} commits - Array of commit hashes
- * @returns {Uint8Array} Derived private key (32 bytes)
+ * Derive chained private key from commits: d = d_base + t₀ + t₁ + … (mod n)
  */
 function deriveChainedPrivateKeyFromCommits(privateKeyBase, commits) {
   let d = bytesToBigInt(privateKeyBase);
-
   for (const commit of commits) {
-    const t = commitScalar(commit);
-    d = (d + t) % N;
+    const P = secp.ProjectivePoint.BASE.multiply(d).toRawBytes(true);
+    d = (d + commitScalar(P, commit)) % N;
   }
-
   return bigIntToBytes(d, 32);
 }
 
@@ -223,23 +213,27 @@ export class Gitmark {
   }
 
   /**
-   * Initialize with genesis UTXO (no commit yet)
+   * Initialize with the genesis UTXO and the first commit: the genesis output is the base key
+   * tweaked by that commit (the base key itself is never an output)
    * @param {string} txid - Genesis transaction ID
    * @param {number} vout - Output index
    * @param {number} amount - Amount in satoshis
+   * @param {string} commitHash - Git commit hash (40 hex chars)
    * @returns {Object} Genesis info
    */
-  genesis(txid, vout, amount) {
+  genesis(txid, vout, amount, commitHash) {
     if (!validateTxid(txid)) {
       throw new Error('Invalid txid: must be 64 hex chars');
     }
+    if (!validateCommitHash(commitHash)) {
+      throw new Error('Invalid commit hash: must be 40 hex chars lowercase (the genesis TXO carries the first commit)');
+    }
 
-    // Genesis pubkey is just the base pubkey (no tweaks yet)
-    const pubkey = bytesToHex(p2trXonly(this.publicKeyBase));
+    this.commits = [commitHash];
+    const pubkey = bytesToHex(p2trXonly(deriveChainedPublicKeyFromCommits(this.publicKeyBase, this.commits)));
 
-    const txo = { txid, vout, amount, pubkey, commit: null };
+    const txo = { txid, vout, amount, pubkey, commit: commitHash };
     this.txos = [txo];
-    this.commits = [];
 
     return {
       txo,
@@ -283,7 +277,7 @@ export class Gitmark {
       txo,
       uri: formatTxoUri({ network: this.network, ...txo }),
       address: this.address(),
-      prevAddress: this.addressAt(this.commits.length - 1)
+      prevAddress: this.addressAt(this.commits.length - 2)
     };
   }
 
@@ -311,20 +305,16 @@ export class Gitmark {
   }
 
   /**
-   * Get address at specific state index
-   * @param {number} index - State index (0 = genesis, 1 = after first commit, etc.)
+   * Get address at a TXO index (0 = the genesis output, tweaked by the first commit; 1 = after the second commit, …)
+   * @param {number} index - TXO index
    * @returns {string} bech32m address
    */
   addressAt(index) {
-    if (index < 0 || index > this.commits.length) {
+    if (index < 0 || index >= this.commits.length) {
       throw new Error('Index out of range');
     }
 
-    if (index === 0) {
-      return encodeBech32m(this.hrp, p2trXonly(this.publicKeyBase));
-    }
-
-    const states = this.commits.slice(0, index);
+    const states = this.commits.slice(0, index + 1);
     const P = deriveChainedPublicKeyFromCommits(this.publicKeyBase, states);
     return encodeBech32m(this.hrp, p2trXonly(P));
   }
@@ -350,74 +340,46 @@ export class Gitmark {
   }
 
   /**
-   * Verify a chain of TXO URIs
+   * Verify a chain of TXO URIs against the trail's base key: every link, not the head alone.
+   * Each TXO must carry a commit; its expected pubkey is recomputed from the base and the commits so
+   * far and compared with the pubkey the URI records (when it records one). The expected pubkeys are
+   * returned too, so a caller with the chain can compare them with the outputs on-chain.
    * @param {string[]} uris - Array of TXO URI strings
-   * @returns {Object} { valid: boolean, error?: string }
+   * @param {string} pubkeyBase - The base key: 33-byte compressed hex (02/03 + x); a bare x is read as the 02 point
+   * @returns {Object} { valid: boolean, error?: string, expected?: string[] }
    */
-  static verify(uris) {
+  static verify(uris, pubkeyBase) {
     if (!Array.isArray(uris) || uris.length === 0) {
       return { valid: false, error: 'Empty or invalid URI array' };
     }
+    const base = String(pubkeyBase || '').toLowerCase();
+    const baseHex = /^0[23][0-9a-f]{64}$/.test(base) ? base : /^[0-9a-f]{64}$/.test(base) ? '02' + base : null;
+    if (!baseHex) {
+      return { valid: false, error: 'pubkeyBase is needed: the trail\'s base key as a compressed point (02/03 + x)' };
+    }
+    const basePubkeyBytes = hexToBytes(baseHex);
 
     const txos = uris.map(parseTxoUri);
-
-    // Genesis should have no commit
-    if (txos[0].commit) {
-      return { valid: false, error: 'Genesis TXO should not have commit' };
-    }
-
-    // We need the base pubkey to verify - extract from genesis
-    const genesisPubkey = txos[0].pubkey;
-    if (!genesisPubkey || !validatePubkey(genesisPubkey)) {
-      return { valid: false, error: 'Invalid genesis pubkey' };
-    }
-
-    // Try both Y parities (even=0x02, odd=0x03) since x-only loses parity info
-    for (const prefix of [0x02, 0x03]) {
-      const basePubkeyBytes = new Uint8Array(33);
-      basePubkeyBytes[0] = prefix;
-      basePubkeyBytes.set(hexToBytes(genesisPubkey), 1);
-
-      const result = Gitmark._verifyWithBase(txos, basePubkeyBytes);
-      if (result.valid) {
-        return result;
-      }
-    }
-
-    // Neither parity worked - return error from even parity attempt
-    const basePubkeyBytes = new Uint8Array(33);
-    basePubkeyBytes[0] = 0x02;
-    basePubkeyBytes.set(hexToBytes(genesisPubkey), 1);
-    return Gitmark._verifyWithBase(txos, basePubkeyBytes);
-  }
-
-  /**
-   * Internal: verify with specific base pubkey
-   */
-  static _verifyWithBase(txos, basePubkeyBytes) {
     const commits = [];
-    for (let i = 1; i < txos.length; i++) {
+    const expected = [];
+    for (let i = 0; i < txos.length; i++) {
       const txo = txos[i];
-
-      if (!txo.commit || !validateCommitHash(txo.commit)) {
-        return { valid: false, error: `Invalid commit at index ${i}` };
+      if (!txo || !txo.commit || !validateCommitHash(txo.commit)) {
+        return { valid: false, error: `TXO ${i} carries no valid commit (every TXO does, the genesis one too)` };
       }
-
       commits.push(txo.commit);
-
-      // Derive expected pubkey
-      const expectedP = deriveChainedPublicKeyFromCommits(basePubkeyBytes, commits);
-      const expectedPubkey = bytesToHex(p2trXonly(expectedP));
-
-      if (expectedPubkey !== txo.pubkey) {
+      const expectedPubkey = bytesToHex(p2trXonly(deriveChainedPublicKeyFromCommits(basePubkeyBytes, commits)));
+      expected.push(expectedPubkey);
+      if (txo.pubkey && expectedPubkey !== txo.pubkey) {
         return {
           valid: false,
-          error: `Pubkey mismatch at index ${i}: expected ${expectedPubkey}, got ${txo.pubkey}`
+          error: `Pubkey mismatch at index ${i}: expected ${expectedPubkey}, got ${txo.pubkey}`,
+          expected
         };
       }
     }
 
-    return { valid: true };
+    return { valid: true, expected };
   }
 
   /**
@@ -464,16 +426,16 @@ export class Gitmark {
    * @param {string[]} uris - Array of TXO URI strings
    * @returns {Object} { valid: boolean, error?: string, ecValid?: boolean, gitValid?: boolean }
    */
-  static verifyFull(uris) {
+  static verifyFull(uris, pubkeyBase) {
     // First verify EC_ADD chain
-    const ecResult = Gitmark.verify(uris);
+    const ecResult = Gitmark.verify(uris, pubkeyBase);
     if (!ecResult.valid) {
       return { ...ecResult, ecValid: false, gitValid: null };
     }
 
     // Extract commits and verify git ancestry
     const txos = uris.map(parseTxoUri);
-    const commits = txos.slice(1).map(t => t.commit).filter(Boolean);
+    const commits = txos.map(t => t.commit).filter(Boolean);
 
     const gitResult = Gitmark.verifyGitAncestry(commits);
 
@@ -492,7 +454,7 @@ export class Gitmark {
    */
   static fromTxoUris(uris) {
     const txos = uris.map(parseTxoUri);
-    const commits = txos.slice(1).map(t => t.commit).filter(Boolean);
+    const commits = txos.map(t => t.commit).filter(Boolean);
     const network = txos[0]?.network || 'tbtc4';
 
     return {
@@ -519,9 +481,27 @@ export class Gitmark {
     return {
       network: this.network,
       publicKeyBase: bytesToHex(this.publicKeyBase),
+      pubkeyBase: bytesToHex(this.publicKeyBase),
       commits: [...this.commits],
       txos: [...this.txos],
       uris: this.txoUris()
+    };
+  }
+
+  /**
+   * The trail as blocktrails.json: what a verifier reads (base key as a full point, the states,
+   * the TXO URIs)
+   * @returns {Object}
+   */
+  trail() {
+    return {
+      '@type': 'Blocktrail',
+      version: '0.0.3',
+      profile: 'gitmark',
+      pubkeyBase: bytesToHex(this.publicKeyBase),
+      chain: this.network,
+      states: [...this.commits],
+      txo: this.txoUris()
     };
   }
 

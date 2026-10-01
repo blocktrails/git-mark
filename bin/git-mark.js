@@ -6,6 +6,7 @@
  * Usage:
  *   git mark init                              Initialize .well-known/txo/
  *   git mark genesis --txid <txid> --vout <n> --amount <sats>
+ *   git mark genesis --txid <txid> --vout <n> --amount <sats> [--commit <hash>]   (the first commit; default HEAD)
  *   git mark advance --txid <txid> --vout <n> --amount <sats> [--commit <hash>]
  *   git mark show                              Display current state
  *   git mark verify                            Verify TXO chain
@@ -143,14 +144,21 @@ const commands = {
     console.log('     git config nostr.privkey <64-char-hex>');
     console.log('');
     console.log('  2. Create genesis with your first UTXO:');
-    console.log('     git mark genesis --txid <txid> --vout 0 --amount <sats>');
+    console.log('     git mark genesis --txid <txid> --vout 0 --amount <sats> [--commit <hash>]');
   },
 
   genesis(options) {
-    const { txid, vout, amount, network = 'tbtc4' } = options;
+    const { txid, vout, amount, network = 'tbtc4', commit } = options;
 
     if (!txid || vout === undefined || !amount) {
-      console.error('Usage: git mark genesis --txid <txid> --vout <n> --amount <sats>');
+      console.error('Usage: git mark genesis --txid <txid> --vout <n> --amount <sats> [--commit <hash>]');
+      process.exit(1);
+    }
+
+    // the genesis TXO carries the first commit: the one given, or HEAD
+    const commitHash = commit || getHeadCommit();
+    if (!commitHash) {
+      console.error('Error: no commit hash provided and not in git repo');
       process.exit(1);
     }
 
@@ -162,7 +170,7 @@ const commands = {
     }
 
     const gm = new Gitmark(privkey, network);
-    const result = gm.genesis(txid, parseInt(vout), parseInt(amount));
+    const result = gm.genesis(txid, parseInt(vout), parseInt(amount), commitHash);
 
     // Save state
     saveState(gm.export());
@@ -255,9 +263,16 @@ const commands = {
       process.exit(1);
     }
 
+    const state = loadState();
+    const pubkeyBase = options.pubkeyBase || options['pubkey-base'] || state?.pubkeyBase || state?.publicKeyBase;
+    if (!pubkeyBase) {
+      console.error('Error: the base key is needed to verify (no .gitmark.json here): --pubkey-base <02/03 + x>');
+      process.exit(1);
+    }
+
     if (options.full) {
       // Full verification: EC_ADD + git ancestry
-      const result = Gitmark.verifyFull(uris);
+      const result = Gitmark.verifyFull(uris, pubkeyBase);
       if (result.valid) {
         console.log('Valid');
         console.log('  EC_ADD chain: valid');
@@ -275,7 +290,7 @@ const commands = {
       }
     } else {
       // EC_ADD verification only
-      const result = Gitmark.verify(uris);
+      const result = Gitmark.verify(uris, pubkeyBase);
       if (result.valid) {
         console.log('Valid');
         console.log('Chain length:', uris.length);
@@ -319,6 +334,15 @@ const commands = {
     console.log(JSON.stringify(uris, null, 2));
   },
 
+  trail() {
+    const state = loadState();
+    if (!state) {
+      console.error('Error: no existing state. Run genesis first.');
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ '@type': 'Blocktrail', version: '0.0.3', profile: 'gitmark', pubkeyBase: state.pubkeyBase || state.publicKeyBase, chain: state.network, states: state.commits, txo: loadTxoJson() }, null, 2));
+  },
+
   help() {
     console.log(`git-mark - Git commits anchored to Bitcoin
 
@@ -332,6 +356,7 @@ Commands:
   verify    Verify TXO chain integrity (--full for git ancestry check)
   address   Show current Taproot address
   export    Output txo.json to stdout
+  trail     Output blocktrails.json (base key, states, TXO URIs) to stdout
 
 Options:
   --key <hex>       Private key (64 hex chars)
