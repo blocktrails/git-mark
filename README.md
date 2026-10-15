@@ -81,7 +81,7 @@ txo:<network>:<txid>:<vout>?amount=<sats>&commit=<git_hash>[&pubkey=<hex>]
 
 | Field | Description |
 |-------|-------------|
-| `network` | Bitcoin network (`tbtc4`, `mainnet`, `signet`) |
+| `network` | Chain id: `btc`, `tbtc4`, `xbt`, `txbt4`, `signet`, `regtest`, `gitmark` (`mainnet` is still accepted for `btc`) |
 | `txid` | Transaction ID (64 hex chars) |
 | `vout` | Output index |
 | `amount` | Value in satoshis |
@@ -191,7 +191,9 @@ MIT
 
 ## Networks
 
-`tbtc4` (default), `mainnet`, `signet`, `regtest`, and `gitmark`: a [sidestr](https://sidestr.com)
+`tbtc4` (default), `btc`, `xbt` and `txbt4` (Bitcoin BLAKE2b mainnet and testnet4: the same
+addresses as their SHA256d parents, signed with the unified sighash), `signet`, `regtest`, and
+`gitmark`: a [sidestr](https://sidestr.com)
 sidechain beside the BLAKE2b testnet4 made for trails — addresses `gm1p…`, transactions mined in
 seconds, and the chain's tip checkpointed into testnet4 every few blocks, so the parent's proof of
 work bounds when a mark was made. Get trail dust from the faucet in the
