@@ -412,3 +412,19 @@ describe('spendingKey', () => {
     assert.notStrictEqual(key, TEST_PRIVKEY);
   });
 });
+
+describe('Chain ids', () => {
+  const key = '1'.repeat(64);
+  test('btc and xbt share bc, tbtc4 and txbt4 share tb; mainnet is still btc', () => {
+    assert.strictEqual(new Gitmark(key, 'btc').address(), new Gitmark(key, 'mainnet').address());
+    assert.strictEqual(new Gitmark(key, 'xbt').address(), new Gitmark(key, 'btc').address());
+    assert.strictEqual(new Gitmark(key, 'txbt4').address(), new Gitmark(key, 'tbtc4').address());
+    assert.ok(new Gitmark(key, 'xbt').address().startsWith('bc1p'));
+    assert.ok(new Gitmark(key, 'txbt4').address().startsWith('tb1p'));
+  });
+  test('a txbt4 genesis writes a txo:txbt4: URI', () => {
+    const g = new Gitmark(key, 'txbt4').genesis('00'.repeat(32), 0, 10000, 'bc4859083751322ed7e6da2a74fbcf42b3302701');
+    assert.ok(g.uri.startsWith('txo:txbt4:'));
+    assert.ok(g.address.startsWith('tb1p'));
+  });
+});

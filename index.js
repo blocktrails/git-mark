@@ -29,9 +29,15 @@ const N = secp.CURVE.n;
 // Network HRPs for bech32m
 // sidestr chain ids behind the network names above (explorer: https://sidestr.com/explorer/?chain=<id>)
 export const NETWORK_CHAIN = { gitmark: 'sidestr:gitmark' };
+// Chain ids as the txo: scheme names them (https://bitcoin-kernel.com/utxo/): btc, tbtc4, xbt, txbt4.
+// The BLAKE2b chains share hrps with their SHA256d parents: same addresses, a different signer
+// (unified sighash), which is the spender's business, not the address's.
 const NETWORK_HRP = {
-  mainnet: 'bc',
+  btc: 'bc',
+  mainnet: 'bc',  // older name for btc, still accepted
   tbtc4: 'tb',
+  xbt: 'bc',      // Bitcoin BLAKE2b
+  txbt4: 'tb',    // Bitcoin BLAKE2b testnet4
   signet: 'tb',
   regtest: 'bcrt',
   // sidestr chains (sidestr.com): the same taproot math; marks land in seconds and the chain is
