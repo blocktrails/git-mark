@@ -165,13 +165,13 @@
   <h2>Overview</h2>
   <p>
     git-mark binds Bitcoin UTXOs to Git commits using elliptic curve tweaking.
-    Each commit hash becomes a tweak that derives a new pubkey, creating a
+    Each commit hash feeds a tweak that derives a new pubkey, creating a
     cryptographic chain linking your repository history to Bitcoin.
   </p>
 
-  <div class="diagram">Genesis:   P&#8320; = privkey &#215; G              (base pubkey)
-Commit 1:  P&#8321; = P&#8320; + sha256(commit&#8321;) &#215; G  (tweaked by git commit)
-Commit 2:  P&#8322; = P&#8321; + sha256(commit&#8322;) &#215; G
+  <div class="diagram">Base:      P_base = privkey &#215; G
+Genesis:   P&#8320; = P_base + t&#8320; &#215; G,  t&#8320; = TapTweak(x(P_base) || sha256(commit&#8320;))
+Commit 1:  P&#8321; = P&#8320; + t&#8321; &#215; G,      t&#8321; = TapTweak(x(P&#8320;) || sha256(commit&#8321;))
 ...</div>
 
   <h2>How It Works</h2>
